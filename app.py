@@ -15,7 +15,7 @@ st.set_page_config("Comparação de Saldos", layout="wide")
 DB_URL = os.getenv("SUPABASE_DB_URL")
 engine = create_engine(DB_URL)
 
-locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
+# locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
 
 # ==============
 # FUNÇÕES
