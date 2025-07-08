@@ -3,3 +3,4 @@ sqlalchemy
 psycopg2-binary
 pandas
 boto3
+dotenv==0.9.9
