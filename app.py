@@ -21,7 +21,7 @@ engine = create_engine(DB_URL)
 # FUNÇÕES
 # ==============
 
-@st.cache_data(ttl=0)
+@st.cache_data(ttl=10)
 def carregar_dados_movimentacoes():
     query = """
         SELECT id, municipio, data_movimentacao, saldo_anterior_valor, saldo_atualizado_valor
@@ -35,7 +35,7 @@ def carregar_dados_movimentacoes():
     df = df.sort_values(['municipio', 'data_only', 'id'])
     return df
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=10)
 def carregar_dados_brutos():
     query = "SELECT * FROM movimentacoes ORDER BY data_movimentacao DESC, id DESC"
     df = pd.read_sql(query, engine)
