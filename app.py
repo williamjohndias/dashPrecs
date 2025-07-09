@@ -21,7 +21,7 @@ engine = create_engine(DB_URL)
 # FUNÇÕES
 # ==============
 
-@st.cache_data(ttl=3600)  # cache por 1 hora para evitar leituras repetidas
+@st.cache_data(ttl=0)
 def carregar_dados_movimentacoes():
     query = """
         SELECT id, municipio, data_movimentacao, saldo_anterior_valor, saldo_atualizado_valor
