@@ -49,7 +49,6 @@ def carregar_dados_movimentacoes(data_inicio=None, data_fim=None):
     return df
 
 
-
 @st.cache_data(ttl=10)
 def carregar_dados_brutos():
     query = "SELECT * FROM movimentacoes ORDER BY data_movimentacao DESC, id DESC"
@@ -130,8 +129,7 @@ def main():
         data_hoje = datetime.today().date()
 
     # Carregar dados
-    df = carregar_dados_movimentacoes(data_inicio=data_ref, data_fim=data_hoje)
-
+    df = carregar_dados_movimentacoes()
     df_resultado = calcular_saldos(df, data_hoje, data_ref)
 
     # Filtro por município
