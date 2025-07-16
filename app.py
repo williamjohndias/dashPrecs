@@ -30,7 +30,7 @@ def carregar_dados_movimentacoes(data_inicio=None, data_fim=None):
     """
 
     # Filtro de intervalo padrão: 2024-2025
-    filtros = ["data_movimentacao BETWEEN '2024-01-01' AND '2025-12-31'"]
+    filtros = ["data_movimentacao BETWEEN '2025-01-01' AND '2025-12-31'"]
 
     # Se o usuário passar filtros adicionais, eles refinam o intervalo
     if data_inicio and data_fim:
