@@ -21,19 +21,34 @@ engine = create_engine(DB_URL)
 # FUNÇÕES
 # ==============
 
-@st.cache_data(ttl=10)
-def carregar_dados_movimentacoes():
+@st.cache_data(ttl=600)
+def carregar_dados_movimentacoes(data_inicio=None, data_fim=None):
     query = """
         SELECT id, municipio, data_movimentacao, saldo_anterior_valor, saldo_atualizado_valor
         FROM movimentacoes
+        WHERE data_movimentacao IS NOT NULL
     """
+
+    # Filtro de intervalo padrão: 2024-2025
+    filtros = ["data_movimentacao BETWEEN '2024-01-01' AND '2025-12-31'"]
+
+    # Se o usuário passar filtros adicionais, eles refinam o intervalo
+    if data_inicio and data_fim:
+        filtros.append(f"data_movimentacao BETWEEN '{data_inicio}' AND '{data_fim}'")
+
+    if filtros:
+        query += " AND " + " AND ".join(filtros)
+
+    query += " ORDER BY municipio, data_movimentacao, id"
+
     df = pd.read_sql(query, engine)
     df = df.dropna(subset=['municipio', 'data_movimentacao']).copy()
     df['data_movimentacao'] = pd.to_datetime(df['data_movimentacao'], errors='coerce')
     df['data_only'] = df['data_movimentacao'].dt.date
     df['municipio'] = df['municipio'].str.strip()
-    df = df.sort_values(['municipio', 'data_only', 'id'])
     return df
+
+
 
 @st.cache_data(ttl=10)
 def carregar_dados_brutos():
@@ -115,7 +130,8 @@ def main():
         data_hoje = datetime.today().date()
 
     # Carregar dados
-    df = carregar_dados_movimentacoes()
+    df = carregar_dados_movimentacoes(data_inicio=data_ref, data_fim=data_hoje)
+
     df_resultado = calcular_saldos(df, data_hoje, data_ref)
 
     # Filtro por município
