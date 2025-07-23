@@ -12,7 +12,7 @@ import locale
 load_dotenv()
 
 st.set_page_config("Comparação de Saldos", layout="wide")
-DB_URL = os.getenv("SUPABASE_DB_URL")
+DB_URL = os.getenv("AWS_DB_URL")
 engine = create_engine(DB_URL)
 
 # locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
