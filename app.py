@@ -115,7 +115,7 @@ def formatar_brl(valor):
 def main():
     col1, col2 = st.columns(2)
     with col1:
-        data_ref = st.date_input("📅 testeData de Referência (comparação)", value=datetime.today().date())
+        data_ref = st.date_input("📅 Data de Referência (comparação)", value=datetime.today().date())
     with col2:
         data_hoje = st.date_input("📆 Data Atual (hoje)", value=datetime.today().date())
 
