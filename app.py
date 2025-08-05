@@ -29,12 +29,15 @@ def carregar_dados_movimentacoes(data_inicio=None, data_fim=None):
         WHERE data_movimentacao IS NOT NULL
     """
 
-    # Aplicar filtros de data se fornecidos, senão usar range padrão amplo
+    # Filtro de intervalo padrão: 2024-2025
+    filtros = ["data_movimentacao BETWEEN '2025-01-01' AND '2025-12-31'"]
+
+    # Se o usuário passar filtros adicionais, eles refinam o intervalo
     if data_inicio and data_fim:
-        query += f" AND data_movimentacao BETWEEN '{data_inicio}' AND '{data_fim}'"
-    else:
-        # Range amplo para garantir que temos dados históricos suficientes
-        query += " AND data_movimentacao BETWEEN '2020-01-01' AND '2030-12-31'"
+        filtros.append(f"data_movimentacao BETWEEN '{data_inicio}' AND '{data_fim}'")
+
+    if filtros:
+        query += " AND " + " AND ".join(filtros)
 
     query += " ORDER BY municipio, data_movimentacao, id"
 
@@ -58,51 +61,37 @@ def calcular_saldos(df, data_hoje, data_ref):
     for municipio, grupo in df.groupby('municipio'):
         grupo = grupo.sort_values(['data_only', 'id'])
 
-        # ===============================
-        # SALDO NA DATA DE REFERÊNCIA
-        # ===============================
+        # Data referência
         df_ref = grupo[grupo['data_only'] <= data_ref]
         saldo_ref = None
-        data_ref_encontrada = None
-        
         if not df_ref.empty:
             data_ref_real = df_ref['data_only'].max()
-            data_ref_encontrada = data_ref_real
             linhas_ref = df_ref[df_ref['data_only'] == data_ref_real]
-            
-            # Sempre usar o saldo_atualizado_valor da movimentação mais recente da data
-            linha = linhas_ref.loc[linhas_ref['id'].idxmax()]
-            saldo_ref = linha['saldo_atualizado_valor']
+            if data_ref_real == data_ref:
+                linha = linhas_ref.loc[linhas_ref['id'].idxmin()]
+                saldo_ref = linha['saldo_anterior_valor']
+            else:
+                linha = linhas_ref.loc[linhas_ref['id'].idxmax()]
+                saldo_ref = linha['saldo_atualizado_valor']
 
-        # ===============================
-        # SALDO NA DATA ATUAL (HOJE)
-        # ===============================
+        # Data hoje
         df_hoje = grupo[grupo['data_only'] <= data_hoje]
         saldo_hoje = None
-        data_hoje_encontrada = None
-        
         if not df_hoje.empty:
             data_hoje_real = df_hoje['data_only'].max()
-            data_hoje_encontrada = data_hoje_real
             linhas_hoje = df_hoje[df_hoje['data_only'] == data_hoje_real]
-            
-            # Sempre usar o saldo_atualizado_valor da movimentação mais recente da data
             linha = linhas_hoje.loc[linhas_hoje['id'].idxmax()]
             saldo_hoje = linha['saldo_atualizado_valor']
 
-        # ===============================
-        # CÁLCULO DA MOVIMENTAÇÃO
-        # ===============================
+        # Diferença
         movimentacao = None
         if saldo_ref is not None and saldo_hoje is not None:
-            movimentacao = saldo_hoje - saldo_ref  # Invertido: positivo = aumento, negativo = diminuição
+            movimentacao = saldo_ref - saldo_hoje
 
         resultados.append({
             'Município': municipio,
             f'Saldo ({data_ref.strftime("%d/%m/%Y")})': saldo_ref,
-            f'Data Ref Real': data_ref_encontrada,
             f'Saldo ({data_hoje.strftime("%d/%m/%Y")})': saldo_hoje,
-            f'Data Hoje Real': data_hoje_encontrada,
             'Movimentação': movimentacao
         })
 
@@ -124,72 +113,24 @@ def formatar_brl(valor):
 # ==============
 
 def main():
-    st.title("💰 Comparativo de Saldos por Município")
-    
-    # Debug: Mostrar range de datas disponíveis
-    with st.expander("🔍 Debug - Informações do Banco de Dados"):
-        try:
-            query_debug = """
-                SELECT 
-                    MIN(data_movimentacao) as data_min,
-                    MAX(data_movimentacao) as data_max,
-                    COUNT(*) as total_registros,
-                    COUNT(DISTINCT municipio) as total_municipios
-                FROM movimentacoes 
-                WHERE data_movimentacao IS NOT NULL
-            """
-            df_debug = pd.read_sql(query_debug, engine)
-            st.write("**Range de datas disponíveis:**", df_debug.iloc[0]['data_min'], "até", df_debug.iloc[0]['data_max'])
-            st.write("**Total de registros:**", df_debug.iloc[0]['total_registros'])
-            st.write("**Total de municípios:**", df_debug.iloc[0]['total_municipios'])
-        except Exception as e:
-            st.error(f"Erro ao carregar informações debug: {e}")
-
     col1, col2 = st.columns(2)
     with col1:
         data_ref = st.date_input("📅 Data de Referência (comparação)", value=datetime.today().date())
     with col2:
         data_hoje = st.date_input("📆 Data Atual (hoje)", value=datetime.today().date())
 
-    # Expandir o range de busca para garantir dados históricos
-    data_inicio_busca = min(data_ref, data_hoje) - pd.Timedelta(days=30)  # 30 dias antes
-    data_fim_busca = max(data_ref, data_hoje) + pd.Timedelta(days=1)      # 1 dia depois
-
     # Validação das datas
     if data_hoje < data_ref:
-        st.warning("⚠️ A data atual é menor que a data de referência.")
+        st.warning("⚠️ A data atual é menor que a data de referência. Ajustando para a mesma data.")
+        data_hoje = data_ref
 
     if data_hoje > datetime.today().date():
         st.warning("⚠️ A data atual não pode ser maior que a data de hoje. Ajustando para hoje.")
         data_hoje = datetime.today().date()
 
-    # Carregar dados com range expandido
-    st.info(f"🔄 Buscando dados de {data_inicio_busca.strftime('%d/%m/%Y')} até {data_fim_busca.strftime('%d/%m/%Y')}")
-    
-    try:
-        df = carregar_dados_movimentacoes(data_inicio_busca, data_fim_busca)
-        
-        if df.empty:
-            st.error("❌ Nenhum dado encontrado no período especificado!")
-            return
-            
-        st.success(f"✅ Carregados {len(df)} registros de {df['municipio'].nunique()} municípios")
-        
-        # Debug: Mostrar dados carregados
-        with st.expander("🔍 Debug - Dados Carregados"):
-            st.write(f"**Período dos dados:** {df['data_only'].min()} até {df['data_only'].max()}")
-            st.write("**Primeiros registros:**")
-            st.dataframe(df.head())
-        
-    except Exception as e:
-        st.error(f"❌ Erro ao carregar dados: {e}")
-        return
-
+    # Carregar dados
+    df = carregar_dados_movimentacoes()
     df_resultado = calcular_saldos(df, data_hoje, data_ref)
-
-    # Debug: Mostrar cálculos
-    with st.expander("🔍 Debug - Resultados dos Cálculos"):
-        st.dataframe(df_resultado)
 
     # Filtro por município
     st.markdown("### 🗂️ Filtro por Município")
@@ -226,10 +167,8 @@ def main():
             if checked:
                 municipios_selecionados.append(municipio)
 
-    # Filtrar dataframe para exibição (sem colunas de debug)
-    colunas_exibicao = ['Município', f'Saldo ({data_ref.strftime("%d/%m/%Y")})', 
-                       f'Saldo ({data_hoje.strftime("%d/%m/%Y")})', 'Movimentação']
-    df_filtrado = df_resultado[df_resultado['Município'].isin(municipios_selecionados)][colunas_exibicao]
+    # Filtrar dataframe para exibição
+    df_filtrado = df_resultado[df_resultado['Município'].isin(municipios_selecionados)]
 
     # Exibição da tabela
     st.markdown("## 💰 Comparativo de Saldos por Município")
@@ -245,7 +184,7 @@ def main():
         use_container_width=True,
         hide_index=True
     )
-    st.caption("🔁 Usa-se sempre o saldo mais recente da data mais próxima anterior ou igual à data solicitada.")
+    st.caption("🔁 Se não houver movimentação exata na data, usa-se o valor mais próximo anterior.")
 
     # ===================
     # HISTÓRICO BRUTO 
@@ -256,6 +195,8 @@ def main():
     # Filtros
     municipios_disponiveis = ["Todos"] + sorted(df['municipio'].dropna().unique())
     municipio_filtro = st.selectbox("📍 Município (Histórico Bruto)", municipios_disponiveis)
+
+     
 
     # Filtro SQL pelo município
     filtro_sql = f"WHERE municipio = '{municipio_filtro}'" if municipio_filtro != "Todos" else ""
@@ -268,23 +209,19 @@ def main():
         LIMIT 1000
     """
 
-    try:
-        df_bruto = pd.read_sql(query_paginada, engine)
+    df_bruto = pd.read_sql(query_paginada, engine)
 
-        # Remove duplicados considerando colunas específicas
-        colunas_para_deduplicar = ['municipio', 'data_movimentacao', 'lancamento_valor']
-        df_bruto = df_bruto.drop_duplicates(subset=colunas_para_deduplicar)
+    # Remove duplicados considerando colunas específicas
+    colunas_para_deduplicar = ['municipio', 'data_movimentacao', 'lancamento_valor']
+    df_bruto = df_bruto.drop_duplicates(subset=colunas_para_deduplicar)
 
-        # Formatação dos valores em BRL
-        for col in ['saldo_anterior_valor', 'saldo_atualizado_valor', 'lancamento_valor']:
-            if col in df_bruto.columns:
-                df_bruto[col] = df_bruto[col].apply(formatar_brl)
+    # Formatação dos valores em BRL
+    for col in ['saldo_anterior_valor', 'saldo_atualizado_valor', 'lancamento_valor']:
+        if col in df_bruto.columns:
+            df_bruto[col] = df_bruto[col].apply(formatar_brl)
 
-        st.markdown(f"🔍 | Município: **{municipio_filtro}**")
-        st.dataframe(df_bruto, use_container_width=True, hide_index=True)
-        
-    except Exception as e:
-        st.error(f"Erro ao carregar histórico: {e}")
+    st.markdown(f"🔍 | Município: **{municipio_filtro}**")
+    st.dataframe(df_bruto, use_container_width=True, hide_index=True)
 
 
 if __name__ == "__main__":
