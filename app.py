@@ -206,7 +206,7 @@ def main():
         FROM movimentacoes
         {filtro_sql}
         ORDER BY data_movimentacao DESC, id DESC
-        LIMIT 1000
+        LIMIT 10000
     """
 
     df_bruto = pd.read_sql(query_paginada, engine)
@@ -226,3 +226,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
