@@ -46,14 +46,14 @@ def carregar_dados_movimentacoes(data_inicio=None, data_fim=None):
         WHERE data_movimentacao IS NOT NULL
     """
 
-    # Filtro otimizado: carrega apenas últimos 2 anos por padrão para performance
-    from datetime import datetime, timedelta
-    data_limite = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
-    filtros = [f"data_movimentacao >= '{data_limite}'"]
-
-    # Se o usuário passar filtros específicos, usa eles
+    # Filtro inteligente baseado nos parâmetros ou padrão amplo
     if data_inicio and data_fim:
         filtros = [f"data_movimentacao BETWEEN '{data_inicio}' AND '{data_fim}'"]
+    else:
+        # Filtro padrão: últimos 3 anos para garantir dados suficientes
+        from datetime import datetime, timedelta
+        data_limite = (datetime.now() - timedelta(days=1095)).strftime('%Y-%m-%d')
+        filtros = [f"data_movimentacao >= '{data_limite}'"]
 
     if filtros:
         query += " AND " + " AND ".join(filtros)
@@ -386,8 +386,9 @@ def main():
     
     # Carregamento otimizado dos dados baseado nas datas selecionadas
     try:
-        data_inicio_query = min(data_ref, data_hoje) - pd.DateOffset(days=7)
-        data_fim_query = max(data_ref, data_hoje) + pd.DateOffset(days=1)
+        # Expandir significativamente o período para garantir dados suficientes
+        data_inicio_query = min(data_ref, data_hoje) - pd.DateOffset(days=180)  # 6 meses antes
+        data_fim_query = max(data_ref, data_hoje) + pd.DateOffset(days=30)     # 1 mês depois
         
         df = carregar_dados_movimentacoes(data_inicio_query.date(), data_fim_query.date())
         df_resultado = calcular_saldos(df, data_hoje, data_ref)
@@ -395,9 +396,16 @@ def main():
         # Remove loading
         loading_placeholder.empty()
         
+        # Debug info
+        st.info(f"📊 **Dados carregados:** {len(df)} registros encontrados | Período: {data_inicio_query.date()} a {data_fim_query.date()}")
+        
         # Verifica se não há dados para o período
         if df_resultado.empty:
-            st.warning("⚠️ Não foram encontrados dados para o período selecionado. Tente expandir o intervalo de datas.")
+            st.warning("⚠️ Não foram encontrados dados para o período selecionado.")
+            if len(df) == 0:
+                st.error("❌ Nenhum registro encontrado no banco de dados para este período.")
+            else:
+                st.info(f"💡 Encontrados {len(df)} registros, mas nenhum para as datas específicas: {data_ref.strftime('%d/%m/%Y')} e {data_hoje.strftime('%d/%m/%Y')}")
             return
             
     except Exception as e:
