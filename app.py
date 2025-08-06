@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 import os
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from datetime import datetime
 import locale
 import plotly.express as px
@@ -29,8 +29,22 @@ DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "Q62^S7v<yK-\\5LHm2PxQ")
 DB_PORT = os.getenv("DB_PORT", "5432")
 
-DB_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-engine = create_engine(DB_URL)
+# URL encode da senha para caracteres especiais
+import urllib.parse
+DB_PASSWORD_ENCODED = urllib.parse.quote_plus(DB_PASSWORD)
+DB_URL = f"postgresql://{DB_USER}:{DB_PASSWORD_ENCODED}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+engine = create_engine(
+    DB_URL,
+    pool_timeout=60,
+    pool_recycle=3600,
+    pool_pre_ping=True,
+    connect_args={
+        "connect_timeout": 60,
+        "application_name": "dashboard-precs-streamlit",
+        "sslmode": "require"
+    }
+)
 
 # locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
 
@@ -38,34 +52,53 @@ engine = create_engine(DB_URL)
 # FUNÇÕES
 # ==============
 
+@st.cache_data(ttl=600)
+def testar_conexao_db():
+    """Testa a conexão com o banco de dados"""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+            return True, "OK"
+    except Exception:
+        return False, "Erro de conexão"
+
 @st.cache_data(ttl=600, show_spinner=False)
 def carregar_dados_movimentacoes(data_inicio=None, data_fim=None):
-    query = """
-        SELECT id, municipio, data_movimentacao, saldo_anterior_valor, saldo_atualizado_valor
-        FROM movimentacoes
-        WHERE data_movimentacao IS NOT NULL
-    """
+    try:
+        query = """
+            SELECT id, municipio, data_movimentacao, saldo_anterior_valor, saldo_atualizado_valor
+            FROM movimentacoes
+            WHERE data_movimentacao IS NOT NULL
+        """
 
-    # Filtro inteligente baseado nos parâmetros ou padrão amplo
-    if data_inicio and data_fim:
-        filtros = [f"data_movimentacao BETWEEN '{data_inicio}' AND '{data_fim}'"]
-    else:
-        # Filtro padrão: últimos 3 anos para garantir dados suficientes
-        from datetime import datetime, timedelta
-        data_limite = (datetime.now() - timedelta(days=1095)).strftime('%Y-%m-%d')
-        filtros = [f"data_movimentacao >= '{data_limite}'"]
+        # Filtro inteligente baseado nos parâmetros ou padrão amplo
+        if data_inicio and data_fim:
+            filtros = [f"data_movimentacao BETWEEN '{data_inicio}' AND '{data_fim}'"]
+        else:
+            # Filtro padrão: últimos 3 anos para garantir dados suficientes
+            from datetime import datetime, timedelta
+            data_limite = (datetime.now() - timedelta(days=1095)).strftime('%Y-%m-%d')
+            filtros = [f"data_movimentacao >= '{data_limite}'"]
 
-    if filtros:
-        query += " AND " + " AND ".join(filtros)
+        if filtros:
+            query += " AND " + " AND ".join(filtros)
 
-    query += " ORDER BY municipio, data_movimentacao, id"
+        query += " ORDER BY municipio, data_movimentacao, id LIMIT 50000"  # Limite para performance
 
-    df = pd.read_sql(query, engine)
-    df = df.dropna(subset=['municipio', 'data_movimentacao']).copy()
-    df['data_movimentacao'] = pd.to_datetime(df['data_movimentacao'], errors='coerce')
-    df['data_only'] = df['data_movimentacao'].dt.date
-    df['municipio'] = df['municipio'].str.strip()
-    return df
+        with engine.connect() as conn:
+            df = pd.read_sql(query, conn)
+        
+        if df.empty:
+            return df
+            
+        df = df.dropna(subset=['municipio', 'data_movimentacao']).copy()
+        df['data_movimentacao'] = pd.to_datetime(df['data_movimentacao'], errors='coerce')
+        df['data_only'] = df['data_movimentacao'].dt.date
+        df['municipio'] = df['municipio'].str.strip()
+        return df
+    except Exception as e:
+        st.error(f"Erro ao carregar dados: {str(e)}")
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -360,20 +393,28 @@ def main():
         st.warning("⚠️ A data de referência não pode ser maior que hoje. Ajustando para hoje.")
         data_ref = hoje
 
+    # Teste de conexão (silencioso)
+    with st.spinner("🔌 Conectando ao banco de dados..."):
+        conectado, mensagem_conexao = testar_conexao_db()
+    
+    if not conectado:
+        st.error(f"❌ Erro de conexão com o banco de dados.")
+        st.info("💡 Tente atualizar a página ou contate o administrador.")
+        return
+    
     # Loading customizado e otimizado
     loading_placeholder = st.empty()
     
     with loading_placeholder.container():
         st.markdown("""
-        <div style="display: flex; justify-content: center; align-items: center; padding: 2rem;">
+        <div style="display: flex; justify-content: center; align-items: center; padding: 1rem;">
             <div style="text-align: center;">
                 <div style="
-                    width: 50px; height: 50px; border: 4px solid #f3f3f3;
-                    border-top: 4px solid #667eea; border-radius: 50%;
-                    animation: spin 1s linear infinite; margin: 0 auto 1rem auto;
+                    width: 40px; height: 40px; border: 3px solid #f3f3f3;
+                    border-top: 3px solid #667eea; border-radius: 50%;
+                    animation: spin 1s linear infinite; margin: 0 auto 0.5rem auto;
                 "></div>
-                <p style="color: #667eea; font-weight: bold;">💰 Carregando dashboard financeiro...</p>
-                <p style="color: #999; font-size: 0.9rem;">Aguarde alguns instantes</p>
+                <p style="color: #667eea; font-weight: bold;">💰 Processando dados...</p>
             </div>
         </div>
         <style>
@@ -396,16 +437,10 @@ def main():
         # Remove loading
         loading_placeholder.empty()
         
-        # Debug info
-        st.info(f"📊 **Dados carregados:** {len(df)} registros encontrados | Período: {data_inicio_query.date()} a {data_fim_query.date()}")
-        
         # Verifica se não há dados para o período
         if df_resultado.empty:
             st.warning("⚠️ Não foram encontrados dados para o período selecionado.")
-            if len(df) == 0:
-                st.error("❌ Nenhum registro encontrado no banco de dados para este período.")
-            else:
-                st.info(f"💡 Encontrados {len(df)} registros, mas nenhum para as datas específicas: {data_ref.strftime('%d/%m/%Y')} e {data_hoje.strftime('%d/%m/%Y')}")
+            st.info("💡 Tente selecionar datas diferentes ou verifique se há movimentações no período.")
             return
             
     except Exception as e:
