@@ -38,7 +38,7 @@ engine = create_engine(DB_URL)
 # FUNÇÕES
 # ==============
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def carregar_dados_movimentacoes(data_inicio=None, data_fim=None):
     query = """
         SELECT id, municipio, data_movimentacao, saldo_anterior_valor, saldo_atualizado_valor
@@ -46,12 +46,14 @@ def carregar_dados_movimentacoes(data_inicio=None, data_fim=None):
         WHERE data_movimentacao IS NOT NULL
     """
 
-    # Filtro de intervalo padrão: desde 2020
-    filtros = ["data_movimentacao >= '2020-01-01'"]
+    # Filtro otimizado: carrega apenas últimos 2 anos por padrão para performance
+    from datetime import datetime, timedelta
+    data_limite = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
+    filtros = [f"data_movimentacao >= '{data_limite}'"]
 
-    # Se o usuário passar filtros adicionais, eles refinam o intervalo
+    # Se o usuário passar filtros específicos, usa eles
     if data_inicio and data_fim:
-        filtros.append(f"data_movimentacao BETWEEN '{data_inicio}' AND '{data_fim}'")
+        filtros = [f"data_movimentacao BETWEEN '{data_inicio}' AND '{data_fim}'"]
 
     if filtros:
         query += " AND " + " AND ".join(filtros)
@@ -66,7 +68,7 @@ def carregar_dados_movimentacoes(data_inicio=None, data_fim=None):
     return df
 
 
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=60, show_spinner=False)
 def carregar_dados_brutos():
     query = "SELECT * FROM movimentacoes ORDER BY data_movimentacao DESC, id DESC"
     df = pd.read_sql(query, engine)
@@ -336,10 +338,39 @@ def main():
         st.warning("⚠️ A data atual não pode ser maior que a data de hoje. Ajustando para hoje.")
         data_hoje = datetime.today().date()
 
-    # Loading animado para carregamento dos dados
-    with st.spinner('📋 Processando movimentações financeiras...'):
-        df = carregar_dados_movimentacoes()
-        df_resultado = calcular_saldos(df, data_hoje, data_ref)
+    # Loading customizado e otimizado
+    loading_placeholder = st.empty()
+    
+    with loading_placeholder.container():
+        st.markdown("""
+        <div style="display: flex; justify-content: center; align-items: center; padding: 2rem;">
+            <div style="text-align: center;">
+                <div style="
+                    width: 50px; height: 50px; border: 4px solid #f3f3f3;
+                    border-top: 4px solid #667eea; border-radius: 50%;
+                    animation: spin 1s linear infinite; margin: 0 auto 1rem auto;
+                "></div>
+                <p style="color: #667eea; font-weight: bold;">💰 Carregando dashboard financeiro...</p>
+                <p style="color: #999; font-size: 0.9rem;">Aguarde alguns instantes</p>
+            </div>
+        </div>
+        <style>
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        </style>
+        """, unsafe_allow_html=True)
+    
+    # Carregamento otimizado dos dados baseado nas datas selecionadas
+    data_inicio_query = min(data_ref, data_hoje) - pd.DateOffset(days=7)
+    data_fim_query = max(data_ref, data_hoje) + pd.DateOffset(days=1)
+    
+    df = carregar_dados_movimentacoes(data_inicio_query.date(), data_fim_query.date())
+    df_resultado = calcular_saldos(df, data_hoje, data_ref)
+    
+    # Remove loading
+    loading_placeholder.empty()
     
     # Métricas de resumo
     if not df_resultado.empty:
@@ -462,15 +493,26 @@ def main():
         # Filtro SQL pelo município
         filtro_sql = f"WHERE municipio = '{municipio_filtro}'" if municipio_filtro != "Todos" else ""
 
+        # Controle de paginação para melhor performance
+        st.markdown("📊 **Configurações de Exibição**")
+        col1, col2 = st.columns(2)
+        with col1:
+            limite_registros = st.selectbox("📄 Registros por página", [100, 500, 1000, 2000], index=1)
+        with col2:
+            ordenacao = st.selectbox("📅 Ordenação", ["Mais recente primeiro", "Mais antigo primeiro"], index=0)
+        
+        ordem_sql = "DESC" if ordenacao == "Mais recente primeiro" else "ASC"
+        
         query_paginada = f"""
             SELECT *
             FROM movimentacoes
             {filtro_sql}
-            ORDER BY data_movimentacao desc, id desc
-            LIMIT 10000
+            ORDER BY data_movimentacao {ordem_sql}, id {ordem_sql}
+            LIMIT {limite_registros}
         """
 
-        df_bruto = pd.read_sql(query_paginada, engine)
+        with st.spinner('📋 Carregando registros...'):
+            df_bruto = pd.read_sql(query_paginada, engine)
 
         # Remove duplicados considerando colunas específicas
         colunas_para_deduplicar = ['municipio', 'data_movimentacao', 'lancamento_valor']
