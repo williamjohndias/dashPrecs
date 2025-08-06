@@ -77,6 +77,11 @@ def carregar_dados_brutos():
 def calcular_saldos(df, data_hoje, data_ref):
     resultados = []
 
+    # Verifica se o DataFrame não está vazio
+    if df.empty:
+        return pd.DataFrame(columns=['Município', f'Saldo ({data_ref.strftime("%d/%m/%Y")})', 
+                                   f'Saldo ({data_hoje.strftime("%d/%m/%Y")})', 'Movimentação'])
+
     for municipio, grupo in df.groupby('municipio'):
         grupo = grupo.sort_values(['data_only', 'id'])
 
@@ -115,8 +120,13 @@ def calcular_saldos(df, data_hoje, data_ref):
         })
 
     df_result = pd.DataFrame(resultados)
+    
+    # Verifica se o DataFrame resultante não está vazio e se a coluna existe
     col_hoje = f'Saldo ({data_hoje.strftime("%d/%m/%Y")})'
-    return df_result.sort_values(by=col_hoje, ascending=False)
+    if not df_result.empty and col_hoje in df_result.columns:
+        return df_result.sort_values(by=col_hoje, ascending=False)
+    else:
+        return df_result
 
 def formatar_brl(valor):
     if pd.isna(valor):
@@ -129,13 +139,19 @@ def formatar_brl(valor):
 
 def criar_metricas_resumo(df_resultado):
     """Cria métricas de resumo do dashboard"""
+    if df_resultado.empty:
+        return 0, 0, 0, 0
+        
     total_municipios = len(df_resultado)
     col_valores = [col for col in df_resultado.columns if 'Saldo' in col]
     
     if len(col_valores) >= 2:
-        saldo_total_atual = df_resultado[col_valores[1]].sum()
-        saldo_total_ref = df_resultado[col_valores[0]].sum()
-        variacao_total = df_resultado['Movimentação'].sum() if 'Movimentação' in df_resultado.columns else 0
+        try:
+            saldo_total_atual = df_resultado[col_valores[1]].fillna(0).sum()
+            saldo_total_ref = df_resultado[col_valores[0]].fillna(0).sum()
+            variacao_total = df_resultado['Movimentação'].fillna(0).sum() if 'Movimentação' in df_resultado.columns else 0
+        except (KeyError, IndexError):
+            saldo_total_atual = saldo_total_ref = variacao_total = 0
     else:
         saldo_total_atual = saldo_total_ref = variacao_total = 0
     
@@ -330,13 +346,19 @@ def main():
             st.rerun()
 
     # Validação das datas
+    hoje = datetime.today().date()
+    
     if data_hoje < data_ref:
         st.warning("⚠️ A data atual é menor que a data de referência. Ajustando para a mesma data.")
         data_hoje = data_ref
 
-    if data_hoje > datetime.today().date():
-        st.warning("⚠️ A data atual não pode ser maior que a data de hoje. Ajustando para hoje.")
-        data_hoje = datetime.today().date()
+    if data_hoje > hoje:
+        st.warning("⚠️ A data atual não pode ser maior que hoje. Ajustando para hoje.")
+        data_hoje = hoje
+        
+    if data_ref > hoje:
+        st.warning("⚠️ A data de referência não pode ser maior que hoje. Ajustando para hoje.")
+        data_ref = hoje
 
     # Loading customizado e otimizado
     loading_placeholder = st.empty()
@@ -363,14 +385,26 @@ def main():
         """, unsafe_allow_html=True)
     
     # Carregamento otimizado dos dados baseado nas datas selecionadas
-    data_inicio_query = min(data_ref, data_hoje) - pd.DateOffset(days=7)
-    data_fim_query = max(data_ref, data_hoje) + pd.DateOffset(days=1)
-    
-    df = carregar_dados_movimentacoes(data_inicio_query.date(), data_fim_query.date())
-    df_resultado = calcular_saldos(df, data_hoje, data_ref)
-    
-    # Remove loading
-    loading_placeholder.empty()
+    try:
+        data_inicio_query = min(data_ref, data_hoje) - pd.DateOffset(days=7)
+        data_fim_query = max(data_ref, data_hoje) + pd.DateOffset(days=1)
+        
+        df = carregar_dados_movimentacoes(data_inicio_query.date(), data_fim_query.date())
+        df_resultado = calcular_saldos(df, data_hoje, data_ref)
+        
+        # Remove loading
+        loading_placeholder.empty()
+        
+        # Verifica se não há dados para o período
+        if df_resultado.empty:
+            st.warning("⚠️ Não foram encontrados dados para o período selecionado. Tente expandir o intervalo de datas.")
+            return
+            
+    except Exception as e:
+        loading_placeholder.empty()
+        st.error(f"❌ Erro ao carregar dados: {str(e)}")
+        st.info("💡 Tente selecionar um período diferente ou verifique a conexão com o banco.")
+        return
     
     # Métricas de resumo
     if not df_resultado.empty:
